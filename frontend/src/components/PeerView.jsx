@@ -6,6 +6,7 @@ function PeerView({ roomId, signalServerUrl }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [isMuted, setIsMuted] = useState(false)
   const [volume, setVolume] = useState(1) // 0 a 1
+  const [remoteStream, setRemoteStream] = useState(null)
 
   const socketRef = useRef(null)
   const remoteVideoRef = useRef(null)
@@ -28,9 +29,17 @@ function PeerView({ roomId, signalServerUrl }) {
     }
   }, [roomId])
 
+  // Asignar el stream remoto de forma segura cuando el elemento se monte y esté listo
+  useEffect(() => {
+    if (status === 'live' && remoteStream && remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream
+    }
+  }, [status, remoteStream])
+
   const connectToRoom = () => {
     setStatus('connecting')
     setErrorMsg('')
+    setRemoteStream(null)
 
     const socket = io(signalServerUrl, {
       reconnectionAttempts: 5,
@@ -40,6 +49,8 @@ function PeerView({ roomId, signalServerUrl }) {
 
     socket.on('connect', () => {
       console.log('Conectado al servidor de señalización, uniéndose a sala:', roomId)
+      setErrorMsg('') // Limpiar mensajes de error previos al conectar con éxito
+      setStatus(prevStatus => prevStatus === 'reconnecting' ? 'connecting' : prevStatus)
       
       socket.emit('join-room', { roomId }, (response) => {
         if (!response.success) {
@@ -71,10 +82,8 @@ function PeerView({ roomId, signalServerUrl }) {
         // Al recibir la pista de video/audio del Host
         pc.ontrack = (event) => {
           console.log('¡Pistas multimedia recibidas con éxito!')
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = event.streams[0]
-            setStatus('live')
-          }
+          setRemoteStream(event.streams[0])
+          setStatus('live')
         }
 
         // Intercambio de ICE Candidates hacia el Host
@@ -99,6 +108,20 @@ function PeerView({ roomId, signalServerUrl }) {
 
         // Configurar oferta remota y crear respuesta local
         await pc.setRemoteDescription(new RTCSessionDescription(offer))
+
+        // Procesar candidatos ICE encolados
+        if (socketRef.current.iceQueue) {
+          console.log(`[WebRTC] Procesando ${socketRef.current.iceQueue.length} candidatos ICE encolados`)
+          for (const cand of socketRef.current.iceQueue) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand))
+            } catch (err) {
+              console.error('Error al procesar ICE Candidate en cola:', err)
+            }
+          }
+          socketRef.current.iceQueue = []
+        }
+
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
@@ -114,12 +137,27 @@ function PeerView({ roomId, signalServerUrl }) {
 
     // Recibir Candidatos ICE del Host
     socket.on('webrtc-ice-candidate', async ({ senderId, candidate }) => {
-      if (peerConnectionRef.current && candidate) {
-        try {
-          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
-        } catch (err) {
-          console.error('Error al agregar ICE Candidate:', err)
+      const pc = peerConnectionRef.current
+      if (pc) {
+        if (pc.remoteDescription && candidate) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate))
+          } catch (err) {
+            console.error('Error al agregar ICE Candidate:', err)
+          }
+        } else if (candidate) {
+          // Encolar candidato si el peer connection aún no tiene la descripción remota
+          if (!socketRef.current.iceQueue) {
+            socketRef.current.iceQueue = []
+          }
+          socketRef.current.iceQueue.push(candidate)
         }
+      } else if (candidate) {
+        // Encolar candidato si el socket ya está conectado pero el peer connection aún no se ha creado
+        if (!socketRef.current.iceQueue) {
+          socketRef.current.iceQueue = []
+        }
+        socketRef.current.iceQueue.push(candidate)
       }
     })
 
@@ -144,6 +182,7 @@ function PeerView({ roomId, signalServerUrl }) {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null
     }
+    setRemoteStream(null)
   }
 
   const handleRetry = () => {

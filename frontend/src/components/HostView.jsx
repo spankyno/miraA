@@ -36,6 +36,13 @@ function HostView({ signalServerUrl }) {
     }
   }, [])
 
+  // Reproducir localmente de forma segura cuando el elemento se monta y el stream está listo
+  useEffect(() => {
+    if (isSharing && stream && localVideoRef.current) {
+      localVideoRef.current.srcObject = stream
+    }
+  }, [isSharing, stream])
+
   // Iniciar la transmisión
   const startTransmission = async () => {
     setErrorMsg('')
@@ -64,10 +71,7 @@ function HostView({ signalServerUrl }) {
       setStream(mediaStream)
       setIsSharing(true)
 
-      // Reproducir localmente
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = mediaStream
-      }
+      // (La reproducción local se maneja reactivamente en el useEffect correspondiente)
 
       // Escuchar si el usuario finaliza la transmisión desde el banner nativo del navegador
       const videoTrack = mediaStream.getVideoTracks()[0]
@@ -96,6 +100,7 @@ function HostView({ signalServerUrl }) {
     socketRef.current = socket
 
     socket.on('connect', () => {
+      setErrorMsg('') // Limpiar error de conexión previo al conectar con éxito
       console.log('Conectado al servidor de señalización. Creando sala...')
       
       // Crear sala
@@ -159,6 +164,19 @@ function HostView({ signalServerUrl }) {
       if (pc) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(answer))
+          
+          // Procesar candidatos ICE encolados
+          if (pc.iceQueue) {
+            console.log(`[WebRTC] Procesando ${pc.iceQueue.length} candidatos ICE encolados para viewer ${viewerId}`)
+            for (const cand of pc.iceQueue) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(cand))
+              } catch (err) {
+                console.error('Error al procesar ICE Candidate en cola:', err)
+              }
+            }
+            pc.iceQueue = []
+          }
         } catch (err) {
           console.error('Error al definir Remote Description del viewer:', err)
         }
@@ -168,11 +186,19 @@ function HostView({ signalServerUrl }) {
     // 3. Al recibir candidatos ICE del Viewer
     socket.on('webrtc-ice-candidate', async ({ senderId, candidate }) => {
       const pc = peersRef.current.get(senderId)
-      if (pc && candidate) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate))
-        } catch (err) {
-          console.error('Error al agregar ICE Candidate del viewer:', err)
+      if (pc) {
+        if (pc.remoteDescription && candidate) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate))
+          } catch (err) {
+            console.error('Error al agregar ICE Candidate del viewer:', err)
+          }
+        } else if (candidate) {
+          // Encolar candidato si aún no se tiene la descripción remota
+          if (!pc.iceQueue) {
+            pc.iceQueue = []
+          }
+          pc.iceQueue.push(candidate)
         }
       }
     })
