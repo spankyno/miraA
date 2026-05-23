@@ -30,12 +30,16 @@ function PeerView({ roomId, signalServerUrl }) {
   }, [roomId])
 
   // Asignar el stream remoto de forma segura cuando el elemento se monte y esté listo
+  // IMPORTANTE: isMuted se gestiona via DOM ref directamente (React no sincroniza
+  // el atributo 'muted' en <video> de forma dinámica tras el renderizado inicial).
   useEffect(() => {
     if (status === 'live' && remoteStream && remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStream
-      // Forzar la reproducción automática de forma segura
-      remoteVideoRef.current.play().catch(err => {
-        console.warn("[Autoplay] La reproducción automática fue bloqueada o falló:", err)
+      const video = remoteVideoRef.current
+      video.srcObject = remoteStream
+      video.muted = true   // silenciado por defecto para cumplir la Autoplay Policy
+      video.volume = volume
+      video.play().catch(err => {
+        console.warn('[Autoplay] La reproducción automática fue bloqueada o falló:', err)
       })
     }
   }, [status, remoteStream])
@@ -332,7 +336,6 @@ function PeerView({ roomId, signalServerUrl }) {
               ref={remoteVideoRef} 
               autoPlay 
               playsInline 
-              muted={isMuted}
               className="video-element"
             />
             
