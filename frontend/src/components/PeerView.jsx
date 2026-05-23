@@ -4,7 +4,7 @@ import { io } from 'socket.io-client'
 function PeerView({ roomId, signalServerUrl }) {
   const [status, setStatus] = useState('connecting') // 'connecting', 'live', 'stopped', 'error', 'reconnecting'
   const [errorMsg, setErrorMsg] = useState('')
-  const [isMuted, setIsMuted] = useState(false)
+  const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(1) // 0 a 1
   const [remoteStream, setRemoteStream] = useState(null)
 
@@ -33,6 +33,10 @@ function PeerView({ roomId, signalServerUrl }) {
   useEffect(() => {
     if (status === 'live' && remoteStream && remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream
+      // Forzar la reproducción automática de forma segura
+      remoteVideoRef.current.play().catch(err => {
+        console.warn("[Autoplay] La reproducción automática fue bloqueada o falló:", err)
+      })
     }
   }, [status, remoteStream])
 
@@ -328,6 +332,7 @@ function PeerView({ roomId, signalServerUrl }) {
               ref={remoteVideoRef} 
               autoPlay 
               playsInline 
+              muted={isMuted}
               className="video-element"
             />
             
