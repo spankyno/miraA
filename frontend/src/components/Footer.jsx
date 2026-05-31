@@ -34,7 +34,7 @@ function Footer() {
         </a>
 
         <a
-          href="https://aitor-blog-contacto.vercel.app/"
+          href="https://aitorsanchez.pages.dev/contacto/"
           target="_blank"
           rel="noopener noreferrer"
           style={{
